@@ -915,7 +915,7 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 		//endregion AbstractProject mirror
 
 		// TODO run this separately since it can block completion (user redirect) if unable to fetch from repository
-		getSyncBranchesTrigger().run();
+		getSyncBranchesTrigger().run(true);
 	}
 
 	/**
@@ -952,14 +952,14 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 	 * disabled, then calling {@link #_syncBranches(TaskListener)} and logging
 	 * its exceptions to the listener.
 	 */
-	public synchronized void syncBranches(TaskListener listener) {
+	public synchronized void syncBranches(TaskListener listener, boolean forceSync) {
 		if (isDisabled()) {
 			listener.getLogger().println("Project disabled.");
 			return;
 		}
 
 		try {
-			_syncBranches(listener);
+			_syncBranches(listener, forceSync);
 		} catch (Throwable e) {
 			e.printStackTrace(listener.fatalError(e.getMessage()));
 		}
@@ -970,7 +970,7 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 	 * updates all sub-project configurations with the configuration specified
 	 * by this project.
 	 */
-	private synchronized void _syncBranches(TaskListener listener)
+	private synchronized void _syncBranches(TaskListener listener, boolean forceSync)
 			throws IOException, InterruptedException {
 		// No SCM to source from, so delete all the branch projects
 		if (scmSource == null) {
@@ -996,6 +996,7 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 
 		Map<String, SCMHead> branches = new HashMap<String, SCMHead>();
 		Set<String> newBranches = new HashSet<String>();
+		List<P> newBranchProjects = new ArrayList<P>();
 		for (SCMHead head : heads) {
 			String branchName = head.getName();
 			branches.put(branchName, head);
@@ -1005,9 +1006,10 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 				listener.getLogger().println(
 						"Creating project for branch " + branchName);
 				try {
-					subProjects.put(branchName,
-							createNewSubProject(this, branchName));
+					P subProject = createNewSubProject(this, branchName);
+					subProjects.put(branchName, subProject);
 					newBranches.add(branchName);
+					newBranchProjects.add(subProject);
 				} catch (Throwable e) {
 					e.printStackTrace(listener.fatalError(e.getMessage()));
 				}
@@ -1032,8 +1034,9 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 
 
 		// Sync config for existing branch projects
+		List<P> projectsToSync = forceSync ? getSubProjects() : newBranchProjects;
 		XmlFile configFile = templateProject.getConfigFile();
-		for (P project : getSubProjects()) {
+		for (P project : projectsToSync) {
 			listener.getLogger().println(
 					"Syncing configuration to project for branch "
 							+ project.getName());
