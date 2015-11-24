@@ -840,7 +840,11 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 	public void doSyncBranches(StaplerRequest req, StaplerResponse rsp)
 			throws IOException, InterruptedException {
 		if (!allowAnonymousSync) {
-			checkPermission(CONFIGURE);
+			if (allowBranchesToDiverge) {
+				checkPermission(BUILD);
+			} else {
+				checkPermission(CONFIGURE);
+			}
 		}
 		getSyncBranchesTrigger().run();
 	}

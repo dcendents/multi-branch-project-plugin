@@ -33,6 +33,7 @@ import hudson.model.Action;
 import hudson.model.Item;
 import hudson.model.Items;
 import hudson.model.PeriodicWork;
+import hudson.security.Permission;
 import hudson.triggers.Trigger;
 import hudson.triggers.TriggerDescriptor;
 import hudson.util.StreamTaskListener;
@@ -44,11 +45,14 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.text.DateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.GregorianCalendar;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -86,6 +90,18 @@ public class SyncBranchesTrigger extends Trigger<AbstractMultiBranchProject> {
 	}
 
 	public void run(boolean forcePushConfiguration) {
+		StreamTaskListener listener = null;
+		try {
+			listener = new StreamTaskListener(getLogFile());
+			run(listener, forcePushConfiguration);
+		} catch (IOException e) {
+			LOGGER.log(Level.SEVERE,
+					"Failed to record sync branches log for " + job, e);
+		}
+
+	}
+
+	public void run(StreamTaskListener listener, boolean forcePushConfiguration) {
 		/*
 		 * The #start(Item, boolean) method provides the job so this will be null
 		 * only when invoked directly before starting.
@@ -94,25 +110,18 @@ public class SyncBranchesTrigger extends Trigger<AbstractMultiBranchProject> {
 			return;
 		}
 
-		try {
-			StreamTaskListener listener = new StreamTaskListener(getLogFile());
+		long start = System.currentTimeMillis();
 
-			long start = System.currentTimeMillis();
+		listener.getLogger().println(
+				"Started on " + DateFormat.getDateTimeInstance().format(
+						new Date()));
 
-			listener.getLogger().println(
-					"Started on " + DateFormat.getDateTimeInstance().format(
-							new Date()));
+		job.syncBranches(listener, forcePushConfiguration);
 
-			job.syncBranches(listener, forcePushConfiguration);
+		listener.getLogger().println("Done. Took " + Util.getTimeSpanString(
+				System.currentTimeMillis() - start));
 
-			listener.getLogger().println("Done. Took " + Util.getTimeSpanString(
-					System.currentTimeMillis() - start));
-
-			listener.close();
-		} catch (IOException e) {
-			LOGGER.log(Level.SEVERE,
-					"Failed to record sync branches log for " + job, e);
-		}
+		listener.closeQuietly();
 	}
 
 	/**
@@ -127,7 +136,15 @@ public class SyncBranchesTrigger extends Trigger<AbstractMultiBranchProject> {
 	 */
 	@Override
 	public Collection<? extends Action> getProjectActions() {
-		return Collections.singleton(new SyncBranchesAction());
+		List<Action> actions = new ArrayList<Action>();
+		actions.add(new SyncBranchesAction());
+		actions.add(new RunSyncBranchesAction());
+
+		if( job.isAllowBranchesToDiverge() ) {
+			actions.add(new PushConfigurationAction());
+		}
+
+		return actions;
 	}
 
 	/**
@@ -166,7 +183,7 @@ public class SyncBranchesTrigger extends Trigger<AbstractMultiBranchProject> {
 		 */
 		@Override
 		public String getUrlName() {
-			return "syncBranchesLog";
+			return "lastSyncBranchesLog";
 		}
 
 		/**
@@ -189,6 +206,136 @@ public class SyncBranchesTrigger extends Trigger<AbstractMultiBranchProject> {
 			new AnnotatedLargeText<SyncBranchesAction>(getLogFile(),
 					Charset.defaultCharset(), true, this).writeHtmlTo(0,
 					out.asWriter());
+		}
+	}
+
+	/**
+	 * Action object for {@link hudson.model.Project}. Used to display the last
+	 * sync branches log.
+	 */
+	public final class RunSyncBranchesAction implements Action {
+		/**
+		 * Used by index.jelly to load the proper sidepanel.jelly.
+		 *
+		 * @return action owner
+		 */
+		@SuppressWarnings(UNUSED)
+		public Item getOwner() {
+			return job;
+		}
+
+		/**
+		 * {@inheritDoc}
+		 */
+		@Override
+		public String getIconFileName() {
+			return "clock.png";
+		}
+
+		/**
+		 * {@inheritDoc}
+		 */
+		@Override
+		public String getDisplayName() {
+			return Messages.SyncBranches_DisplayName();
+		}
+
+		/**
+		 * {@inheritDoc}
+		 */
+		@Override
+		public String getUrlName() {
+			return "syncBranchesLog";
+		}
+
+		/**
+		 * Used by index.jelly to display the log.
+		 *
+		 * @return the log
+		 */
+		@SuppressWarnings(UNUSED)
+		public String getLog() throws IOException {
+			return Util.loadFile(getLogFile());
+		}
+
+		/**
+		 * Writes the annotated log to the given output.
+		 * <p/>
+		 * Used by index.jelly to display the log.
+		 */
+		@SuppressWarnings(UNUSED)
+		public void writeLogTo(XMLOutput out) throws IOException {
+			if (!job.isAllowAnonymousSync()) {
+				if (job.isAllowBranchesToDiverge()) {
+					job.checkPermission(Item.BUILD);
+				} else {
+					job.checkPermission(Item.CONFIGURE);
+				}
+			}
+			run(new StreamTaskListener(out.asWriter()), false);
+		}
+	}
+
+	/**
+	 * Action object for {@link hudson.model.Project}. Used to display the last
+	 * sync branches log.
+	 */
+	public final class PushConfigurationAction implements Action {
+		/**
+		 * Used by index.jelly to load the proper sidepanel.jelly.
+		 *
+		 * @return action owner
+		 */
+		@SuppressWarnings(UNUSED)
+		public Item getOwner() {
+			return job;
+		}
+
+		/**
+		 * {@inheritDoc}
+		 */
+		@Override
+		public String getIconFileName() {
+			return "clock.png";
+		}
+
+		/**
+		 * {@inheritDoc}
+		 */
+		@Override
+		public String getDisplayName() {
+			return Messages.PushConfiguration_DisplayName();
+		}
+
+		/**
+		 * {@inheritDoc}
+		 */
+		@Override
+		public String getUrlName() {
+			return "pushConfigurationLog";
+		}
+
+		/**
+		 * Used by index.jelly to display the log.
+		 *
+		 * @return the log
+		 */
+		@SuppressWarnings(UNUSED)
+		public String getLog() throws IOException {
+			return Util.loadFile(getLogFile());
+		}
+
+		/**
+		 * Writes the annotated log to the given output.
+		 * <p/>
+		 * Used by index.jelly to display the log.
+		 */
+		@SuppressWarnings(UNUSED)
+		public void writeLogTo(XMLOutput out) throws IOException {
+			if (!job.isAllowAnonymousSync()) {
+				job.checkPermission(Permission.CONFIGURE);
+			}
+			run(new StreamTaskListener(out.asWriter()), true);
 		}
 	}
 
