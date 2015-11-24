@@ -38,10 +38,14 @@ import hudson.triggers.Trigger;
 import hudson.triggers.TriggerDescriptor;
 import hudson.util.StreamTaskListener;
 import jenkins.model.Jenkins;
+
+import org.apache.commons.io.output.TeeOutputStream;
 import org.apache.commons.jelly.XMLOutput;
 import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.framework.io.WriterOutputStream;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.text.DateFormat;
@@ -272,7 +276,8 @@ public class SyncBranchesTrigger extends Trigger<AbstractMultiBranchProject> {
 					job.checkPermission(Item.CONFIGURE);
 				}
 			}
-			run(new StreamTaskListener(out.asWriter()), false);
+			run(new StreamTaskListener(new TeeOutputStream(new WriterOutputStream(out.asWriter()),
+					new FileOutputStream(getLogFile()))), false);
 		}
 	}
 
@@ -335,7 +340,8 @@ public class SyncBranchesTrigger extends Trigger<AbstractMultiBranchProject> {
 			if (!job.isAllowAnonymousSync()) {
 				job.checkPermission(Permission.CONFIGURE);
 			}
-			run(new StreamTaskListener(out.asWriter()), true);
+			run(new StreamTaskListener(new TeeOutputStream(new WriterOutputStream(out.asWriter()),
+					new FileOutputStream(getLogFile()))), true);
 		}
 	}
 
