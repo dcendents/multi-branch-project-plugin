@@ -24,6 +24,7 @@
 package com.github.mjdetullio.jenkins.plugins.multibranch;
 
 import antlr.ANTLRException;
+
 import com.google.common.collect.ImmutableMap;
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.NonNull;
@@ -50,6 +51,7 @@ import hudson.model.View;
 import hudson.model.ViewDescriptor;
 import hudson.model.ViewGroup;
 import hudson.model.ViewGroupMixIn;
+import hudson.model.Descriptor.FormException;
 import hudson.model.listeners.ItemListener;
 import hudson.model.listeners.SaveableListener;
 import hudson.scm.NullSCM;
@@ -159,6 +161,8 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 
 	private boolean suppressTriggerNewBranchBuild;
 
+	private boolean allowBranchesToDiverge;
+
 	protected volatile SCMSource scmSource;
 
 	/**
@@ -166,6 +170,10 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 	 */
 	public AbstractMultiBranchProject(ItemGroup parent, String name) {
 		super(parent, name);
+
+		// Set global configuration values
+		this.allowBranchesToDiverge = ((AbstractMultiBranchProject.AbstractProjectDescriptor) getDescriptor()).isAllowBranchesToDiverge();
+
 		init();
 	}
 
@@ -716,6 +724,17 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 		save();
 	}
 
+	@SuppressWarnings(UNUSED)
+	public boolean isAllowBranchesToDiverge() {
+		return allowBranchesToDiverge;
+	}
+
+	@SuppressWarnings(UNUSED)
+	public void setAllowBranchesToDiverge(boolean b) throws IOException {
+		this.allowBranchesToDiverge = b;
+		save();
+	}
+
 	/**
 	 * Stapler URL binding for creating views for our branch projects.  Unlike
 	 * normal views, this only requires permission to configure the project, not
@@ -827,6 +846,24 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 	}
 
 	/**
+	 * Exposes a URI that allows to push the configuration to all branch projects.
+	 *
+	 * @param req - Stapler request
+	 * @param rsp - Stapler response
+	 * @throws IOException          - if problems
+	 * @throws InterruptedException - if problems
+	 */
+	@RequirePOST
+	@SuppressWarnings(UNUSED)
+	public void doPushConfiguration(StaplerRequest req, StaplerResponse rsp)
+			throws IOException, InterruptedException {
+		if (!allowAnonymousSync) {
+			checkPermission(CONFIGURE);
+		}
+		getSyncBranchesTrigger().run(true);
+	}
+
+	/**
 	 * {@inheritDoc}
 	 */
 	@SuppressWarnings(UNUSED)
@@ -840,6 +877,7 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 
 		allowAnonymousSync = req.getSubmittedForm().has("allowAnonymousSync");
 		suppressTriggerNewBranchBuild = req.getSubmittedForm().has("suppressTriggerNewBranchBuild");
+		allowBranchesToDiverge = req.getSubmittedForm().has("allowBranchesToDiverge");
 
 		try {
 			JSONObject json = req.getSubmittedForm();
@@ -915,7 +953,7 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 		//endregion AbstractProject mirror
 
 		// TODO run this separately since it can block completion (user redirect) if unable to fetch from repository
-		getSyncBranchesTrigger().run(true);
+		getSyncBranchesTrigger().run();
 	}
 
 	/**
@@ -952,14 +990,15 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 	 * disabled, then calling {@link #_syncBranches(TaskListener)} and logging
 	 * its exceptions to the listener.
 	 */
-	public synchronized void syncBranches(TaskListener listener, boolean forceSync) {
+	public synchronized void syncBranches(TaskListener listener, boolean forcePushConfiguration) {
 		if (isDisabled()) {
 			listener.getLogger().println("Project disabled.");
 			return;
 		}
 
 		try {
-			_syncBranches(listener, forceSync);
+			boolean pushConfiguration = forcePushConfiguration || !allowBranchesToDiverge;
+			_syncBranches(listener, pushConfiguration);
 		} catch (Throwable e) {
 			e.printStackTrace(listener.fatalError(e.getMessage()));
 		}
@@ -970,7 +1009,7 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 	 * updates all sub-project configurations with the configuration specified
 	 * by this project.
 	 */
-	private synchronized void _syncBranches(TaskListener listener, boolean forceSync)
+	private synchronized void _syncBranches(TaskListener listener, boolean pushConfiguration)
 			throws IOException, InterruptedException {
 		// No SCM to source from, so delete all the branch projects
 		if (scmSource == null) {
@@ -1034,7 +1073,7 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 
 
 		// Sync config for existing branch projects
-		List<P> projectsToSync = forceSync ? getSubProjects() : newBranchProjects;
+		List<P> projectsToSync = pushConfiguration ? getSubProjects() : newBranchProjects;
 		XmlFile configFile = templateProject.getConfigFile();
 		for (P project : projectsToSync) {
 			listener.getLogger().println(
@@ -1665,5 +1704,51 @@ public abstract class AbstractMultiBranchProject<P extends AbstractProject<P, B>
 				enforceProjectStateOnUpdated((Item) o);
 			}
 		}
+	}
+
+	/**
+	 * Our project's descriptor.
+	 */
+	public static abstract class AbstractProjectDescriptor extends
+			AbstractProject.AbstractProjectDescriptor {
+
+		// To have only 1 configuration section in the global congiration page,
+		// it has been added only on the Freestyle plugin
+		// but we want to share it with the Maven plugin so we make the variable static
+		private static boolean staticAllowBranchesToDiverge;
+		private boolean allowBranchesToDiverge;
+
+		public AbstractProjectDescriptor() {
+			if( this instanceof FreeStyleMultiBranchProject.DescriptorImpl ) {
+				load();
+				staticAllowBranchesToDiverge = this.allowBranchesToDiverge;
+			}
+        }
+
+        /**
+		 * @return the allowBranchesToDiverge
+		 */
+		public boolean isAllowBranchesToDiverge() {
+			return AbstractProjectDescriptor.staticAllowBranchesToDiverge;
+		}
+
+		/**
+		 * @param allowBranchesToDiverge the allowBranchesToDiverge to set
+		 */
+		public void setAllowBranchesToDiverge(boolean allowBranchesToDiverge) {
+			this.allowBranchesToDiverge = allowBranchesToDiverge;
+			staticAllowBranchesToDiverge = this.allowBranchesToDiverge;
+		}
+
+		/**
+         * {@inheritDoc}
+         */
+        @Override
+        public boolean configure(StaplerRequest req, JSONObject json) throws FormException {
+        	req.bindJSON(this, json.getJSONObject("multibranch_plugin"));
+
+            save();
+            return true;
+        }
 	}
 }

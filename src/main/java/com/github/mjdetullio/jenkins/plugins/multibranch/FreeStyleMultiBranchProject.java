@@ -82,7 +82,7 @@ public class FreeStyleMultiBranchProject extends AbstractMultiBranchProject
 	 */
 	@Extension
 	public static class DescriptorImpl extends
-			AbstractProject.AbstractProjectDescriptor {
+			AbstractMultiBranchProject.AbstractProjectDescriptor {
 		/**
 		 * {@inheritDoc}
 		 */

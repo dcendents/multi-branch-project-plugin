@@ -97,7 +97,7 @@ public class MavenMultiBranchProject extends
 	 */
 	@Extension
 	public static class DescriptorImpl extends
-			AbstractProject.AbstractProjectDescriptor {
+			AbstractMultiBranchProject.AbstractProjectDescriptor {
 		/**
 		 * {@inheritDoc}
 		 */
